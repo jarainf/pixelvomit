@@ -1,0 +1,22 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build pixelvomit",
+            "type": "shell",
+            "command": "gcc",
+            "args": [
+                "pixelvomit.c",
+                "-o",
+                "pixelvomit",
+                "-pthread"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$gcc"],
+            "detail": "Generated task for building the pixelvomit program"
+        }
+    ]
+}
