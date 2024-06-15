@@ -16,25 +16,50 @@
 #include <signal.h>
 #include <sys/epoll.h>
 
+#define CEILING(x,y) (((x) + (y) - 1) / (y))
+
 #define FRAMERATE 60
 #define FB_DEV "/dev/fb0"
 #define PORT 42024
 #define GRAB_SIZE 2048
 #define DA_MODE 1
-#define MAX_EVENTS 10
+#define NUM_THREADS 4
+#define TOTAL_CLIENTS 60
+#define MAX_EVENTS CEILING(TOTAL_CLIENTS, NUM_THREADS)
 
 struct fb_var_screeninfo vinfo;
 struct fb_fix_screeninfo finfo;
 uint32_t *vbuffer;
 int fb_fd;
 
+typedef struct {
+    int fd;
+    int offset_x;
+    int offset_y;
+    char buffer[GRAB_SIZE + 1];
+    char message[GRAB_SIZE * 2];
+    size_t message_length;
+} client_state;
+
+typedef struct {
+    int epoll_fd;
+    client_state clients[MAX_EVENTS];
+    struct epoll_event events[MAX_EVENTS];
+    int active_connections;
+} client_thread;
+
 void get_framebuffer_properties();
 void *handle_connections(void *arg);
-void handle_client(int client_fd);
+void *handle_clients(void *arg);
+void handle_client(client_state *client);
 void write_vbuffer();
 void cleanup();
+int find_client(client_state *clients, int client_fd);
+int find_spot(client_thread *thread_data, int *thread, int *client);
 
 int main() {
+    printf("%d\n",TOTAL_CLIENTS);
+    printf("%d\n",MAX_EVENTS);
     int server_fd;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
@@ -96,7 +121,9 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    // Start a thread to handle connections
+    printf("Listening socket_fd: %d\n", server_fd);
+
+    // Start thread to handle incoming connections
     pthread_create(&thread, NULL, handle_connections, &server_fd);
     pthread_detach(thread);
 
@@ -129,6 +156,8 @@ void get_framebuffer_properties() {
 }
 
 void *handle_connections(void *arg) {
+    pthread_t threads[NUM_THREADS];
+    int thread_args[NUM_THREADS];
     int server_fd = *(int *)arg;
     int epoll_fd = epoll_create1(0);
     if (epoll_fd == -1) {
@@ -148,6 +177,24 @@ void *handle_connections(void *arg) {
         exit(EXIT_FAILURE);
     }
 
+    client_thread thread_data[NUM_THREADS] = {0};
+
+    printf("Socket handle connection established. FD: %d\n", epoll_fd);
+
+    // Start multiple threads to handle connections
+    for (int i = 0; i < NUM_THREADS; i++) {
+        thread_data[i].epoll_fd = epoll_create1(0);
+        if (thread_data[i].epoll_fd == -1) {
+            perror("epoll_create1 failed");
+            close(server_fd);
+            exit(EXIT_FAILURE);
+        }
+        
+        pthread_create(&threads[i], NULL, handle_clients, &thread_data[i]);
+        pthread_detach(threads[i]);
+    }
+
+    // while-loop to accept new clients
     while (1) {
         int n = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
         if (n == -1) {
@@ -158,21 +205,36 @@ void *handle_connections(void *arg) {
         }
 
         for (int i = 0; i < n; i++) {
-            if (events[i].data.fd == server_fd) {
-                int client_fd = accept(server_fd, NULL, NULL);
-                if (client_fd == -1) {
-                    perror("accept failed");
-                    continue;
-                }
+            int client_fd = accept(server_fd, NULL, NULL);
+            if (client_fd == -1) {
+                perror("accept failed");
+                continue;
+            }
 
-                event.events = EPOLLIN;
-                event.data.fd = client_fd;
-                if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &event) == -1) {
+            event.events = EPOLLIN;
+            event.data.fd = client_fd;
+
+            // Logic to select appropriate thread and client spot
+            int thread = 0;
+            int client = 0;
+
+            if (find_spot(thread_data, &thread, &client) == 0) {
+                printf("New spot, thread: %d spot: %d\n", thread, client);
+                if (epoll_ctl(thread_data[thread].epoll_fd, EPOLL_CTL_ADD, client_fd, &event) == -1) {
                     perror("epoll_ctl: add client_fd failed");
                     close(client_fd);
+                } else {
+                    thread_data[thread].clients[client].fd = client_fd;
+                    thread_data[thread].clients[client].offset_x = 0;
+                    thread_data[thread].clients[client].offset_y = 0;
+                    thread_data[thread].clients[client].message_length = 0;
+                    thread_data[thread].active_connections += 1;
+
+                    printf("Client accepted, FD: %d on epoll: %d. Thread: %d Client: %d\n", client_fd, epoll_fd, thread, client);
                 }
             } else {
-                handle_client(events[i].data.fd);
+                perror("no spot found closing connection");
+                close(client_fd);
             }
         }
     }
@@ -181,59 +243,127 @@ void *handle_connections(void *arg) {
     return NULL;
 }
 
-void handle_client(int client_fd) {
-    char buffer[GRAB_SIZE + 1] = {0};
-    static char message[GRAB_SIZE * 2] = {0};
-    static int offset_x = 0, offset_y = 0;
-    ssize_t bytes_received;
-    static size_t message_length = 0;
+void *handle_clients(void *arg) {
+    client_thread *thread_data = (client_thread *) arg;
 
-    bytes_received = recv(client_fd, buffer, GRAB_SIZE, 0);
+    while (1) {
+        int n = epoll_wait(thread_data->epoll_fd, thread_data->events, MAX_EVENTS, -1);
+        if (n == -1) {
+            perror("epoll_wait failed");
+            close(thread_data->epoll_fd);
+            exit(EXIT_FAILURE);
+        }
+
+        for (int i = 0; i < n; i++) {
+            int client_fd = find_client(thread_data->clients, thread_data->events[i].data.fd);
+            
+            if (client_fd != -1) {
+                handle_client(&thread_data->clients[client_fd]);
+            } else {
+                perror("client_fd not in clients");
+                continue;
+            }
+        }
+
+        // TODO: close threads?
+        
+    }
+
+    close(thread_data->epoll_fd);
+    return NULL;
+}
+
+void handle_client(client_state *client) {
+    ssize_t bytes_received;
+
+    bytes_received = recv(client->fd, client->buffer, GRAB_SIZE, 0);
     if (bytes_received <= 0) {
-        close(client_fd);
+        close(client->fd);
         return;
     }
 
-    buffer[bytes_received] = '\0';
+    client->buffer[bytes_received] = '\0';
 
     // Ensure no buffer overflow
-    if (message_length + bytes_received > sizeof(message) - 1) {
+    if (client->message_length + bytes_received > sizeof(client->message) - 1) {
         fprintf(stderr, "Buffer overflow detected, closing connection.\n");
-        close(client_fd);
+        close(client->fd);
         return;
     }
 
-    strncat(message, buffer, bytes_received);
-    message_length += bytes_received;
+    strncat(client->message, client->buffer, bytes_received);
+    client->message_length += bytes_received;
 
     char *newline_pos;
-    while ((newline_pos = strchr(message, '\n')) != NULL) {
+    while ((newline_pos = strchr(client->message, '\n')) != NULL) {
         *newline_pos = '\0';
-        char *line = message;
+        char *line = client->message;
 
         if (strncmp(line, "OF", 2) == 0) {
-            sscanf(line + 6, "%d %d", &offset_x, &offset_y);
+            sscanf(line + 6, "%d %d", &client->offset_x, &client->offset_y);
         } else if (strncmp(line, "SI", 2) == 0) {
             char size_response[32];
             snprintf(size_response, sizeof(size_response), "SIZE %d %d\n", vinfo.xres, vinfo.yres);
-            send(client_fd, size_response, strlen(size_response), 0);
+            send(client->fd, size_response, strlen(size_response), 0);
         } else if (strncmp(line, "PX", 2) == 0) {
             int x, y;
             char value[9] = {0};
             sscanf(line + 2, "%d %d %8s", &x, &y, value);
-            x += offset_x;
-            y += offset_y;
+            x += client->offset_x;
+            y += client->offset_y;
 
             if (x < vinfo.xres && y < vinfo.yres) {
                 uint32_t color = strtoul(value, NULL, 16);
                 vbuffer[y * (finfo.line_length / 4) + x] = color;
             }
+        } else {
+            printf("Token: %s\n", line);
         }
 
-        memmove(message, newline_pos + 1, message_length - (newline_pos - message) - 1);
-        message_length -= (newline_pos - message) + 1;
-        message[message_length] = '\0';
+        memmove(client->message, newline_pos + 1, client->message_length - (newline_pos - client->message) - 1);
+        client->message_length -= (newline_pos - client->message) + 1;
+        client->message[client->message_length] = '\0';
     }
+}
+
+int find_client(client_state *clients, int client_fd) {
+    for (int i = 0; i < MAX_EVENTS; i++) {
+        if (clients[i].fd == client_fd) {
+            return i;
+        }        
+    }
+    return -1;
+}
+
+int find_spot(client_thread *thread_data, int *thread, int *client) {
+    int lowest = __INT_MAX__;
+    *thread = 0;
+    *client = 0;
+    // find the best thread with an open slot
+    for (int i = 0; i < NUM_THREADS; i++) {
+        if (thread_data[i].active_connections != 0) {
+            if (thread_data[i].active_connections <= lowest) {
+                lowest = thread_data[i].active_connections;
+                *thread = i;
+            }
+        } else {
+            lowest = 0;
+            *thread = i;
+            break;
+        }
+    }
+    // If a suitable thread has been found
+    if (lowest < __INT_MAX__) {
+        // find the open spot
+        for (*client = 0; *client < MAX_EVENTS; *client += 1) {
+            if (thread_data[*thread].clients[*client].fd == 0) {
+                break;
+            }
+        }
+        return(0);
+    }
+    // all slots are full
+    return -1;
 }
 
 void cleanup() {
