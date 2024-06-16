@@ -324,7 +324,7 @@ void handle_client(client_state *client) {
         } else if (strncmp(line, "PX", 2) == 0) {
             int x, y;
             char value[9] = {0};
-            parse_int_int_str(line + 2, &x, &y, value);
+            parse_int_int_str(line + 3, &x, &y, value);
             x += client->offset_x;
             y += client->offset_y;
 
