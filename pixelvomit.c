@@ -24,7 +24,7 @@
 #define GRAB_SIZE 2048
 #define DA_MODE 1
 #define NUM_THREADS 4
-#define TOTAL_CLIENTS 60
+#define TOTAL_CLIENTS 1352
 #define MAX_EVENTS CEILING(TOTAL_CLIENTS, NUM_THREADS)
 
 struct fb_var_screeninfo vinfo;
@@ -245,7 +245,7 @@ void *handle_connections(void *arg) {
                     printf("Client accepted, FD: %d on epoll: %d. Thread: %d Client: %d\n", client_fd, epoll_fd, thread, client);
                 }
             } else {
-                perror("no spot found closing connection");
+                perror("no spot found - closing connection");
                 close(client_fd);
             }
         }
