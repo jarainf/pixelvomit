@@ -59,6 +59,9 @@ void write_vbuffer();
 void cleanup();
 int find_client(client_state *clients, int client_fd);
 int find_spot(client_thread *thread_data, int *thread, int *client);
+void parse_int_int(const char *input, int *out_int1, int *out_int2);
+void parse_int_int_str(const char *input, int *out_int1, int *out_int2, char *out_str);
+void write_to_vbuffer(int x, int y, uint32_t color);
 
 int main() {
     printf("%d\n",TOTAL_CLIENTS);
@@ -182,6 +185,7 @@ void *handle_connections(void *arg) {
 
     client_thread thread_data[NUM_THREADS] = {0};
     client_state* clients_buffer = (client_state*) malloc(TOTAL_CLIENTS * sizeof(client_state));
+    memset(clients_buffer, 0, TOTAL_CLIENTS * sizeof(client_state));
 
     printf("Socket handle connection established. FD: %d\n", epoll_fd);
 
@@ -323,7 +327,7 @@ void handle_client(client_state *client) {
         char *line = client->message;
 
         if (strncmp(line, "OF", 2) == 0) {
-            sscanf(line + 6, "%d %d", &client->offset_x, &client->offset_y);
+            parse_int_int(line + 6, &client->offset_x, &client->offset_y);
         } else if (strncmp(line, "SI", 2) == 0) {
             char size_response[32];
             snprintf(size_response, sizeof(size_response), "SIZE %d %d\n", vinfo.xres, vinfo.yres);
@@ -331,13 +335,13 @@ void handle_client(client_state *client) {
         } else if (strncmp(line, "PX", 2) == 0) {
             int x, y;
             char value[9] = {0};
-            sscanf(line + 2, "%d %d %8s", &x, &y, value);
+            parse_int_int_str(line + 2, &x, &y, value);
             x += client->offset_x;
             y += client->offset_y;
 
             if (x < vinfo.xres && y < vinfo.yres) {
                 uint32_t color = strtoul(value, NULL, 16);
-                vbuffer[y * (finfo.line_length / 4) + x] = color;
+                write_to_vbuffer(x, y, color);
             }
         } else {
             printf("Token: %s\n", line);
@@ -388,6 +392,24 @@ int find_spot(client_thread *thread_data, int *thread, int *client) {
     }
     // all slots are full
     return -1;
+}
+
+void parse_int_int(const char *input, int *out_int1, int *out_int2) {
+    char *endptr;
+    *out_int1 = strtol(input, &endptr, 10);
+    *out_int2 = strtol(endptr, NULL, 10);
+}
+
+void parse_int_int_str(const char *input, int *out_int1, int *out_int2, char *out_str) {
+    char *endptr;
+    *out_int1 = strtol(input, &endptr, 10);
+    *out_int2 = strtol(endptr, &endptr, 10);
+    memcpy(out_str, endptr, 9);
+    out_str[9] = '\0';
+}
+
+void write_to_vbuffer(int x, int y, uint32_t color) {
+    vbuffer[y * (finfo.line_length / 4) + x] = color;
 }
 
 void cleanup() {
