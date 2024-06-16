@@ -58,8 +58,8 @@ void write_vbuffer();
 void cleanup();
 int find_client(client_state *clients, int client_fd);
 int find_spot(client_thread *thread_data, int *thread, int *client);
-void parse_int_int(const char *input, int *out_int1, int *out_int2);
-void parse_int_int_str(const char *input, int *out_int1, int *out_int2, char *out_str);
+void parse_int_int(const char *input, int *a, int *b);
+void parse_int_int_str(const char *input, int *a, int *b, char *str);
 void write_to_vbuffer(int x, int y, uint32_t color);
 
 int main() {
@@ -323,13 +323,12 @@ void handle_client(client_state *client) {
             send(client->fd, size_response, strlen(size_response), 0);
         } else if (strncmp(line, "PX", 2) == 0) {
             int x, y;
-            char value[9] = {0};
-            parse_int_int_str(line + 3, &x, &y, value);
+            parse_int_int_str(line + 3, &x, &y, line);
             x += client->offset_x;
             y += client->offset_y;
 
             if (x < vinfo.xres && y < vinfo.yres) {
-                uint32_t color = strtoul(value, NULL, 16);
+                uint32_t color = strtoul(line, NULL, 16);
                 write_to_vbuffer(x, y, color);
             }
         } else {
@@ -383,63 +382,46 @@ int find_spot(client_thread *thread_data, int *thread, int *client) {
     return -1;
 }
 
-void parse_int_int(const char *input, int *out_int1, int *out_int2) {
-    const char *ptr = input;
-
+void parse_int_int(const char *input, int *a, int *b) {
     // Parse first integer
-    int result = 0;
-    while (*ptr >= '0' && *ptr <= '9') {
-        result = (result << 3) + (result << 1) + (*ptr & 0xF); // result * 10 + digit
-        ptr++;
+    *a = 0;
+    while (*input >= '0' && *input <= '9') {
+        *a = (*a << 3) + (*a << 1) + (*input & 0xF); // result * 10 + digit
+        input++;
     }
-    *out_int1 = result;
-
-    // Ignore everything but numbers
-    while (*ptr && (*ptr < '0' || *ptr > '9')) {
-        ptr++;
-    }
-
-    // Parse second integer
-    result = 0;
-    while (*ptr >= '0' && *ptr <= '9') {
-        result = (result << 3) + (result << 1) + (*ptr & 0xF); // result * 10 + digit
-        ptr++;
-    }
-    *out_int2 = result;
-}
-
-void parse_int_int_str(const char *input, int *out_int1, int *out_int2, char *out_str) {
-        const char *ptr = input;
-
-    // Parse first integer
-    int result = 0;
-    while (*ptr >= '0' && *ptr <= '9') {
-        result = (result << 3) + (result << 1) + (*ptr & 0xF); // result * 10 + digit
-        ptr++;
-    }
-    *out_int1 = result;
-
-    // Ignore everything but numbers
-    while (*ptr && (*ptr < '0' || *ptr > '9')) {
-        ptr++;
-    }
-
-    // Parse second integer
-    result = 0;
-    while (*ptr >= '0' && *ptr <= '9') {
-        result = (result << 3) + (result << 1) + (*ptr & 0xF); // result * 10 + digit
-        ptr++;
-    }
-    *out_int2 = result;
 
     // Ignore whitespace
-    while (*ptr == ' ') {
-        ptr++;
+    input++;
+
+    // Parse second integer
+    *b = 0;
+    while (*input >= '0' && *input <= '9') {
+        *b = (*b << 3) + (*b << 1) + (*input & 0xF); // result * 10 + digit
+        input++;
+    }
+}
+
+void parse_int_int_str(const char *input, int *a, int *b, char *str) {
+    // Parse first integer
+    *a = 0;
+    while (*input >= '0' && *input <= '9') {
+        *a = (*a << 3) + (*a << 1) + (*input & 0xF); // result * 10 + digit
+        input++;
     }
 
-    // Assume the rest
-    memcpy(out_str, ptr, 10);
-    out_str[10] = '\0'; // Null-terminate the string
+    // Ignore whitespace
+    input++;
+
+    // Parse second integer
+    *b = 0;
+    while (*input >= '0' && *input <= '9') {
+        *b = (*b << 3) + (*b << 1) + (*input & 0xF); // result * 10 + digit
+        input++;
+    }
+
+    // Ignore whitespace
+    input++;
+    memcpy(str, input, 8);
 }
 
 void write_to_vbuffer(int x, int y, uint32_t color) {
