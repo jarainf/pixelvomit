@@ -23,7 +23,6 @@
 #define FB_DEV "/dev/fb0"
 #define PORT 42024
 #define GRAB_SIZE 2048
-#define DA_MODE 1
 #define NUM_THREADS 8
 #define TOTAL_CLIENTS 10000
 #define CLIENTS_PER_THREAD CEILING(TOTAL_CLIENTS, NUM_THREADS)
@@ -83,21 +82,11 @@ int main() {
     // Get framebuffer properties
     get_framebuffer_properties();
 
-    if (DA_MODE) {
-        vbuffer = (uint32_t *)mmap(NULL, finfo.smem_len, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
-        if (vbuffer == MAP_FAILED) {
-            perror("Error mapping framebuffer device to memory");
-            close(fb_fd);
-            return EXIT_FAILURE;
-        }
-    } else {
-        vbuffer = (uint32_t *)malloc(vinfo.yres_virtual * finfo.line_length);
-        if (!vbuffer) {
-            perror("Error allocating memory for vbuffer");
-            close(fb_fd);
-            return EXIT_FAILURE;
-        }
-        memset(vbuffer, 0, vinfo.yres_virtual * finfo.line_length);
+    vbuffer = (uint32_t *)mmap(NULL, finfo.smem_len, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
+    if (vbuffer == MAP_FAILED) {
+        perror("Error mapping framebuffer device to memory");
+        close(fb_fd);
+        return EXIT_FAILURE;
     }
 
     // Create socket
