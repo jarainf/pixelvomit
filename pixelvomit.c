@@ -58,7 +58,7 @@ int find_client(client_state *clients, int client_fd);
 int find_spot(client_thread *thread_data, int *thread, int *client);
 
 int main() {
-    printf("%d\n",TOTAL_CLIENTS);
+    printf("%d\n",MAX_EVENTS * NUM_THREADS);
     printf("%d\n",MAX_EVENTS);
     int server_fd;
     struct sockaddr_in address;
@@ -167,7 +167,7 @@ void *handle_connections(void *arg) {
     }
 
     struct epoll_event event, events[MAX_EVENTS];
-    event.events = EPOLLIN;
+    event.events = EPOLLIN | EPOLLRDHUP | EPOLLERR;
     event.data.fd = server_fd;
 
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &event) == -1) {
@@ -205,6 +205,18 @@ void *handle_connections(void *arg) {
         }
 
         for (int i = 0; i < n; i++) {
+            if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
+                printf("Connection dropped: %d", events[i].data.fd);
+                for (int i = 0; i < NUM_THREADS; i++) {
+                    if (find_client(thread_data[i].clients, events[i].data.fd) != -1) {
+                        thread_data[i].clients->fd = 0;
+                        thread_data[i].active_connections -= 1;
+                        break;
+                    }
+                }
+                continue;
+            }
+
             int client_fd = accept(server_fd, NULL, NULL);
             if (client_fd == -1) {
                 perror("accept failed");
@@ -278,7 +290,8 @@ void handle_client(client_state *client) {
 
     bytes_received = recv(client->fd, client->buffer, GRAB_SIZE, 0);
     if (bytes_received <= 0) {
-        close(client->fd);
+        printf("Client dropped: %d\n", client->fd);
+        client->fd = close(client->fd);
         return;
     }
 
@@ -342,7 +355,7 @@ int find_spot(client_thread *thread_data, int *thread, int *client) {
     // find the best thread with an open slot
     for (int i = 0; i < NUM_THREADS; i++) {
         if (thread_data[i].active_connections != 0) {
-            if (thread_data[i].active_connections <= lowest) {
+            if (thread_data[i].active_connections <= lowest && thread_data[i].active_connections != MAX_EVENTS) {
                 lowest = thread_data[i].active_connections;
                 *thread = i;
             }
@@ -360,6 +373,7 @@ int find_spot(client_thread *thread_data, int *thread, int *client) {
                 break;
             }
         }
+
         return(0);
     }
     // all slots are full
