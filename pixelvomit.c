@@ -25,7 +25,7 @@
 #define GRAB_SIZE 2048
 #define DA_MODE 1
 #define NUM_THREADS 8
-#define TOTAL_CLIENTS 1352
+#define TOTAL_CLIENTS 10000
 #define CLIENTS_PER_THREAD CEILING(TOTAL_CLIENTS, NUM_THREADS)
 #define EVENTS_PER_THREAD 40
 #define MAX_EVENTS MAX(EVENTS_PER_THREAD, CLIENTS_PER_THREAD)
@@ -181,7 +181,7 @@ void *handle_connections(void *arg) {
     }
 
     client_thread thread_data[NUM_THREADS] = {0};
-    client_state clients_buffer[TOTAL_CLIENTS] = {0};
+    client_state* clients_buffer = (client_state*) malloc(TOTAL_CLIENTS * sizeof(client_state));
 
     printf("Socket handle connection established. FD: %d\n", epoll_fd);
 
