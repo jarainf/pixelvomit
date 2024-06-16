@@ -189,6 +189,8 @@ void *handle_connections(void *arg) {
             close(server_fd);
             exit(EXIT_FAILURE);
         }
+
+        printf("Start thread: %d FD: %d\n", i, epoll_fd);
         
         pthread_create(&threads[i], NULL, handle_clients, &thread_data[i]);
         pthread_detach(threads[i]);
