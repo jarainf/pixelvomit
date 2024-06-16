@@ -17,15 +17,18 @@
 #include <sys/epoll.h>
 
 #define CEILING(x,y) (((x) + (y) - 1) / (y))
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
 
 #define FRAMERATE 60
 #define FB_DEV "/dev/fb0"
 #define PORT 42024
 #define GRAB_SIZE 2048
 #define DA_MODE 1
-#define NUM_THREADS 4
+#define NUM_THREADS 8
 #define TOTAL_CLIENTS 1352
-#define MAX_EVENTS CEILING(TOTAL_CLIENTS, NUM_THREADS)
+#define CLIENTS_PER_THREAD CEILING(TOTAL_CLIENTS, NUM_THREADS)
+#define EVENTS_PER_THREAD 40
+#define MAX_EVENTS MAX(EVENTS_PER_THREAD, CLIENTS_PER_THREAD)
 
 struct fb_var_screeninfo vinfo;
 struct fb_fix_screeninfo finfo;
@@ -43,7 +46,7 @@ typedef struct {
 
 typedef struct {
     int epoll_fd;
-    client_state clients[MAX_EVENTS];
+    client_state *clients;
     struct epoll_event events[MAX_EVENTS];
     int active_connections;
 } client_thread;
@@ -58,8 +61,8 @@ int find_client(client_state *clients, int client_fd);
 int find_spot(client_thread *thread_data, int *thread, int *client);
 
 int main() {
-    printf("%d\n",MAX_EVENTS * NUM_THREADS);
-    printf("%d\n",MAX_EVENTS);
+    printf("%d\n",TOTAL_CLIENTS);
+    printf("%d\n",CLIENTS_PER_THREAD);
     int server_fd;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
@@ -178,6 +181,7 @@ void *handle_connections(void *arg) {
     }
 
     client_thread thread_data[NUM_THREADS] = {0};
+    client_state clients_buffer[TOTAL_CLIENTS] = {0};
 
     printf("Socket handle connection established. FD: %d\n", epoll_fd);
 
@@ -189,6 +193,8 @@ void *handle_connections(void *arg) {
             close(server_fd);
             exit(EXIT_FAILURE);
         }
+
+        thread_data[i].clients = &clients_buffer[CLIENTS_PER_THREAD * i];
 
         printf("Start thread: %d FD: %d\n", i, epoll_fd);
         
@@ -207,9 +213,11 @@ void *handle_connections(void *arg) {
         }
 
         for (int i = 0; i < n; i++) {
+            /* Shit never worked, is wrong and we probably never get these events here
             if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
                 printf("Connection dropped: %d", events[i].data.fd);
                 for (int i = 0; i < NUM_THREADS; i++) {
+
                     if (find_client(thread_data[i].clients, events[i].data.fd) != -1) {
                         thread_data[i].clients->fd = 0;
                         thread_data[i].active_connections -= 1;
@@ -217,7 +225,7 @@ void *handle_connections(void *arg) {
                     }
                 }
                 continue;
-            }
+            }*/
 
             int client_fd = accept(server_fd, NULL, NULL);
             if (client_fd == -1) {
@@ -342,7 +350,7 @@ void handle_client(client_state *client) {
 }
 
 int find_client(client_state *clients, int client_fd) {
-    for (int i = 0; i < MAX_EVENTS; i++) {
+    for (int i = 0; i < CLIENTS_PER_THREAD; i++) {
         if (clients[i].fd == client_fd) {
             return i;
         }        
@@ -357,7 +365,7 @@ int find_spot(client_thread *thread_data, int *thread, int *client) {
     // find the best thread with an open slot
     for (int i = 0; i < NUM_THREADS; i++) {
         if (thread_data[i].active_connections != 0) {
-            if (thread_data[i].active_connections <= lowest && thread_data[i].active_connections != MAX_EVENTS) {
+            if (thread_data[i].active_connections <= lowest && thread_data[i].active_connections != CLIENTS_PER_THREAD) {
                 lowest = thread_data[i].active_connections;
                 *thread = i;
             }
@@ -370,7 +378,7 @@ int find_spot(client_thread *thread_data, int *thread, int *client) {
     // If a suitable thread has been found
     if (lowest < __INT_MAX__) {
         // find the open spot
-        for (*client = 0; *client < MAX_EVENTS; *client += 1) {
+        for (*client = 0; *client < CLIENTS_PER_THREAD; *client += 1) {
             if (thread_data[*thread].clients[*client].fd == 0) {
                 break;
             }
