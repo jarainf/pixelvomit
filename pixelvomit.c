@@ -316,7 +316,7 @@ void handle_client(client_state *client) {
         char *line = client->message;
 
         if (strncmp(line, "OF", 2) == 0) {
-            parse_int_int(line + 6, &client->offset_x, &client->offset_y);
+            parse_int_int(line + 7, &client->offset_x, &client->offset_y);
         } else if (strncmp(line, "SI", 2) == 0) {
             char size_response[32];
             snprintf(size_response, sizeof(size_response), "SIZE %d %d\n", vinfo.xres, vinfo.yres);
