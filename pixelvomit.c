@@ -59,7 +59,7 @@ void cleanup();
 int find_client(client_state *clients, int client_fd);
 int find_spot(client_thread *thread_data, int *thread, int *client);
 void parse_int_int(const char *input, int *a, int *b);
-void parse_int_int_str(const char *input, int *a, int *b, char *str);
+void parse_int_int_hex(const char *input, int *a, int *b, int *c);
 void write_to_vbuffer(int x, int y, uint32_t color);
 
 int main() {
@@ -322,13 +322,12 @@ void handle_client(client_state *client) {
             snprintf(size_response, sizeof(size_response), "SIZE %d %d\n", vinfo.xres, vinfo.yres);
             send(client->fd, size_response, strlen(size_response), 0);
         } else if (strncmp(line, "PX", 2) == 0) {
-            int x, y;
-            parse_int_int_str(line + 3, &x, &y, line);
+            int x, y, color;
+            parse_int_int_hex(line + 3, &x, &y, &color);
             x += client->offset_x;
             y += client->offset_y;
 
             if (x < vinfo.xres && y < vinfo.yres) {
-                uint32_t color = strtoul(line, NULL, 16);
                 write_to_vbuffer(x, y, color);
             }
         } else {
@@ -401,7 +400,7 @@ void parse_int_int(const char *input, int *a, int *b) {
     }
 }
 
-void parse_int_int_str(const char *input, int *a, int *b, char *str) {
+void parse_int_int_hex(const char *input, int *a, int *b, int *c) {
     // Parse first integer
     *a = 0;
     while (*input >= '0' && *input <= '9') {
@@ -421,7 +420,24 @@ void parse_int_int_str(const char *input, int *a, int *b, char *str) {
 
     // Ignore whitespace
     input++;
-    memcpy(str, input, 8);
+
+    // Parse Hex
+    *c = 0;
+    uint8_t count = 0;
+    while (*input && count < 8) {
+        *c <<= 4; // Shift left by 4 bits
+        if (*input >= '0' && *input <= '9') {
+            *c |= (*input & 0xF); // Add the value of the current hex digit
+        } else if (*input >= 'A' && *input <= 'F') {
+            *c |= (*input - 'A' + 10); // Add the value of the current hex digit
+        } else if (*input >= 'a' && *input <= 'f') {
+            *c |= (*input - 'a' + 10); // Add the value of the current hex digit
+        } else {
+            break;
+        }
+        input++;
+        count++;
+    }
 }
 
 void write_to_vbuffer(int x, int y, uint32_t color) {
