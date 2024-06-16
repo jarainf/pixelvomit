@@ -384,17 +384,62 @@ int find_spot(client_thread *thread_data, int *thread, int *client) {
 }
 
 void parse_int_int(const char *input, int *out_int1, int *out_int2) {
-    char *endptr;
-    *out_int1 = strtol(input, &endptr, 10);
-    *out_int2 = strtol(endptr, NULL, 10);
+    const char *ptr = input;
+
+    // Parse first integer
+    int result = 0;
+    while (*ptr >= '0' && *ptr <= '9') {
+        result = (result << 3) + (result << 1) + (*ptr & 0xF); // result * 10 + digit
+        ptr++;
+    }
+    *out_int1 = result;
+
+    // Ignore everything but numbers
+    while (*ptr && (*ptr < '0' || *ptr > '9')) {
+        ptr++;
+    }
+
+    // Parse second integer
+    result = 0;
+    while (*ptr >= '0' && *ptr <= '9') {
+        result = (result << 3) + (result << 1) + (*ptr & 0xF); // result * 10 + digit
+        ptr++;
+    }
+    *out_int2 = result;
 }
 
 void parse_int_int_str(const char *input, int *out_int1, int *out_int2, char *out_str) {
-    char *endptr;
-    *out_int1 = strtol(input, &endptr, 10);
-    *out_int2 = strtol(endptr, &endptr, 10);
-    memcpy(out_str, endptr, 9);
-    out_str[9] = '\0';
+        const char *ptr = input;
+
+    // Parse first integer
+    int result = 0;
+    while (*ptr >= '0' && *ptr <= '9') {
+        result = (result << 3) + (result << 1) + (*ptr & 0xF); // result * 10 + digit
+        ptr++;
+    }
+    *out_int1 = result;
+
+    // Ignore everything but numbers
+    while (*ptr && (*ptr < '0' || *ptr > '9')) {
+        ptr++;
+    }
+
+    // Parse second integer
+    result = 0;
+    while (*ptr >= '0' && *ptr <= '9') {
+        result = (result << 3) + (result << 1) + (*ptr & 0xF); // result * 10 + digit
+        ptr++;
+    }
+    *out_int2 = result;
+
+    // Ignore whitespace
+    while (*ptr == ' ') {
+        ptr++;
+    }
+
+    // Assume the rest
+    memcpy(out_str, ptr, 10);
+    out_str[10] = '\0'; // Null-terminate the string
 }
 
 void write_to_vbuffer(int x, int y, uint32_t color) {
