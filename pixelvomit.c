@@ -24,8 +24,8 @@
 #define FRAMERATE 60
 #define FB_DEV "/dev/fb0"
 #define PORT 42024
-#define GRAB_SIZE 2048
-#define NUM_THREADS 8
+#define GRAB_SIZE 2048 * 8
+#define NUM_THREADS 2
 #define TOTAL_CLIENTS 10000
 #define CLIENTS_PER_THREAD CEILING(TOTAL_CLIENTS, NUM_THREADS)
 #define EVENTS_PER_THREAD 40
@@ -44,24 +44,24 @@ typedef struct {
     int fd;
     int offset_x;
     int offset_y;
+    size_t message_length;
     char buffer[GRAB_SIZE + 1];
     char message[GRAB_SIZE * 2];
-    size_t message_length;
 } client_state;
 
 // struct to handle thread data
 typedef struct {
     int epoll_fd;
+    int active_connections;
     client_state *clients;
     struct epoll_event events[MAX_EVENTS];
-    int active_connections;
 } client_thread;
 
 // declarations
 void get_framebuffer_properties();
 void *handle_connections(void *arg);
 void *handle_clients(void *arg);
-void handle_client(client_state *client);
+void handle_client(client_thread *thread_data, client_state *client);
 void write_vbuffer();
 void cleanup();
 int find_client(client_state *clients, int client_fd);
@@ -305,7 +305,7 @@ void *handle_clients(void *arg) {
             // check if we found a client
             if (client_fd != -1) {
                 // we found a client, handle its data
-                handle_client(&thread_data->clients[client_fd]);
+                handle_client(thread_data, &thread_data->clients[client_fd]);
             } else {
                 // we didn't find the client
                 perror("client_fd not in clients");
@@ -320,14 +320,22 @@ void *handle_clients(void *arg) {
 }
 
 // function to handle clients data
-void handle_client(client_state *client) {
+void handle_client(client_thread *thread_data, client_state *client) {
     ssize_t bytes_received;
 
     // receive data
     bytes_received = recv(client->fd, client->buffer, GRAB_SIZE, 0);
     if (bytes_received <= 0) {
         printf("Client dropped: %d\n", client->fd);
+        // find the client
+        int client_num = find_client(thread_data->clients, client->fd);
+        // close the connection
         client->fd = close(client->fd);
+        // check if we found a client
+        if (client_num != -1) {
+            thread_data->clients[client_num].fd = 0;
+            thread_data->active_connections -= 1;
+        }
         return;
     }
 
@@ -337,6 +345,15 @@ void handle_client(client_state *client) {
     // Ensure no buffer overflow
     if (client->message_length + bytes_received > sizeof(client->message) - 1) {
         fprintf(stderr, "Buffer overflow detected, closing connection.\n");
+        // find the client
+        int client_num = find_client(thread_data->clients, client->fd);
+        // close the connection
+        client->fd = close(client->fd);
+        // check if we found a client
+        if (client_num != -1) {
+            thread_data->clients[client_num].fd = 0;
+            thread_data->active_connections -= 1;
+        }
         close(client->fd);
         return;
     }
