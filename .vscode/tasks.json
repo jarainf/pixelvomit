@@ -9,6 +9,7 @@
                 "pixelvomit.c",
                 "-o",
                 "pixelvomit",
+                "-O3",
                 "-pthread"
             ],
             "group": {
