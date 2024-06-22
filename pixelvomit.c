@@ -24,12 +24,38 @@
 #define FRAMERATE 60
 #define FB_DEV "/dev/fb0"
 #define PORT 42024
-#define GRAB_SIZE 2048 * 8
+#define GRAB_SIZE 2048 * 8 
 #define NUM_THREADS 2
 #define TOTAL_CLIENTS 10000
 #define CLIENTS_PER_THREAD CEILING(TOTAL_CLIENTS, NUM_THREADS)
 #define EVENTS_PER_THREAD 40
 #define MAX_EVENTS MAX(EVENTS_PER_THREAD, CLIENTS_PER_THREAD)
+
+// Lookup-table for hex
+static const uint8_t hex_table[256] __attribute__((aligned(64))) = {
+    [0 ... 255] = 255,
+    ['0'] = 0,
+    ['1'] = 1,
+    ['2'] = 2,
+    ['3'] = 3,
+    ['4'] = 4,
+    ['5'] = 5,
+    ['6'] = 6,
+    ['7'] = 7,
+    ['8'] = 8,
+    ['9'] = 9,
+    ['A'] = 10,
+    ['B'] = 11,
+    ['C'] = 12,
+    ['D'] = 13,
+    ['E'] = 14,
+    ['F'] = 15,
+    ['a'] = 10,
+    ['b'] = 11,
+    ['c'] = 12,
+    ['d'] = 13,
+    ['e'] = 14,
+    ['f'] = 15};
 
 // structs for framebuffer information
 struct fb_var_screeninfo vinfo;
@@ -498,20 +524,14 @@ void parse_int_int_hex(const char *input, int *a, int *b, int *c) {
 
     // Parse Hex
     *c = 0;
-    uint8_t count = 0;
-    while (*input && count < 8) {
-        *c <<= 4; // Shift left by 4 bits
-        if (*input >= '0' && *input <= '9') {
-            *c |= (*input & 0xF); // Add the value of the current hex digit
-        } else if (*input >= 'A' && *input <= 'F') {
-            *c |= (*input - 'A' + 10); // Add the value of the current hex digit
-        } else if (*input >= 'a' && *input <= 'f') {
-            *c |= (*input - 'a' + 10); // Add the value of the current hex digit
+    while (*input) {
+        uint8_t value = hex_table[(unsigned char)*input];
+        if (value != 255) {
+            *c = (*c << 4) | value;
+            input++;
         } else {
             break;
         }
-        input++;
-        count++;
     }
 }
 
