@@ -82,6 +82,8 @@ typedef struct {
     struct epoll_event events[MAX_EVENTS];
 } client_thread;
 
+// TODO: Add struct for better cleanup or something
+
 // declarations
 void get_framebuffer_properties();
 void *handle_connections(void *arg);
@@ -102,7 +104,7 @@ int main() {
     int server_fd;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
-    pthread_t thread;
+    // pthread_t thread;
 
     signal(SIGINT, cleanup);  // Handle interrupts to clean up resources
 
@@ -152,7 +154,7 @@ int main() {
 
     printf("Listening socket_fd: %d\n", server_fd);
 
-    // Start thread to handle incoming connections
+    /*/ Start thread to handle incoming connections
     pthread_create(&thread, NULL, handle_connections, &server_fd);
     pthread_detach(thread);
 
@@ -160,7 +162,10 @@ int main() {
     while (1)
     {
         usleep(1000000 / FRAMERATE);
-    }
+    }*/
+
+    // Start handling incoming connections
+    handle_connections(&server_fd);   
 
     cleanup();
     return 0;
