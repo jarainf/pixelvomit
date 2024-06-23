@@ -71,8 +71,7 @@ typedef struct {
     int offset_x;
     int offset_y;
     size_t message_length;
-    char buffer[GRAB_SIZE + 1];
-    char message[GRAB_SIZE * 2];
+    char message[64];
 } client_state;
 
 // struct to handle thread data
@@ -348,11 +347,16 @@ void *handle_clients(void *arg) {
 // function to handle clients data
 void handle_client(client_thread *thread_data, client_state *client) {
     ssize_t bytes_received;
+    char buffer[GRAB_SIZE + 64] = {0};
 
-    // receive data
-    bytes_received = recv(client->fd, client->buffer, GRAB_SIZE, 0);
+    // write the rest of the message into buffer before we receive data
+    if (client->message_length > 0) {
+        memcpy(buffer, client->message, strlen(client->message));
+    }
+    
+    // receive data and append it to the message
+    bytes_received = recv(client->fd, buffer + client->message_length, GRAB_SIZE, 0);
     if (bytes_received <= 0) {
-        printf("Client dropped: %d\n", client->fd);
         // find the client
         int client_num = find_client(thread_data->clients, client->fd);
         // close the connection
@@ -364,36 +368,18 @@ void handle_client(client_thread *thread_data, client_state *client) {
         }
         return;
     }
+
+    bytes_received += client->message_length;
 
     // terminate the buffer so we don't loop over all of it
-    client->buffer[bytes_received] = '\0';
-
-    // Ensure no buffer overflow
-    if (client->message_length + bytes_received > sizeof(client->message) - 1) {
-        fprintf(stderr, "Buffer overflow detected, closing connection.\n");
-        // find the client
-        int client_num = find_client(thread_data->clients, client->fd);
-        // close the connection
-        client->fd = close(client->fd);
-        // check if we found a client
-        if (client_num != -1) {
-            thread_data->clients[client_num].fd = 0;
-            thread_data->active_connections -= 1;
-        }
-        close(client->fd);
-        return;
-    }
-
-    // copy the newly received buffer onto the rest of a message we might have
-    strncat(client->message, client->buffer, bytes_received);
-    client->message_length += bytes_received;
+    buffer[bytes_received] = '\0';
 
     // loop over the received message, line by line
     char *newline_pos;
-    while ((newline_pos = strchr(client->message, '\n')) != NULL) {
+    while ((newline_pos = strchr(buffer, '\n')) != NULL) {
         // overwrite the position of the newline with '\0'
         *newline_pos = '\0';
-        char *line = client->message;
+        char *line = buffer;
 
         // see what kind of message we received
         // TODO: probably better to have "PX" first
@@ -425,12 +411,10 @@ void handle_client(client_thread *thread_data, client_state *client) {
             // we received a string we didn't expect
             printf("Token: %s\n", line);
         }
-        
-        // remove the line from the message currently being worked on
-        memmove(client->message, newline_pos + 1, client->message_length - (newline_pos - client->message) - 1);
-        client->message_length -= (newline_pos - client->message) + 1;
-        client->message[client->message_length] = '\0';
+        memmove(buffer, newline_pos + 1, bytes_received);
     }
+    client->message_length = strlen(buffer);
+    memcpy(client->message, buffer, client->message_length);
 }
 
 // find a client in the client_states provided
