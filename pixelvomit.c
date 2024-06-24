@@ -389,15 +389,7 @@ void handle_client(client_thread *thread_data, client_state *client) {
         // see what kind of message we received
         // TODO: probably better to have "PX" first
         //       also might consider not using strncmp
-        if (strncmp(line, "OF", 2) == 0) {
-            // we received an offset, write it into the client data struct
-            parse_int_int(line + 7, &client->offset_x, &client->offset_y);
-        } else if (strncmp(line, "SI", 2) == 0) {
-            // SIZE was requested, return it
-            char size_response[32];
-            snprintf(size_response, sizeof(size_response), "SIZE %d %d\n", vinfo.xres, vinfo.yres);
-            send(client->fd, size_response, strlen(size_response), 0);
-        } else if (strncmp(line, "PX", 2) == 0) {
+        if (*line == 'P') {
             // Someone requested to write a pixel
             int x, y, color;
             // parse position and color of the pixel
@@ -412,6 +404,14 @@ void handle_client(client_thread *thread_data, client_state *client) {
             if (x < vinfo.xres && y < vinfo.yres) {
                 write_to_vbuffer(x, y, color);
             }
+        } else if (*line == 'O') {
+            // we received an offset, write it into the client data struct
+            parse_int_int(line + 7, &client->offset_x, &client->offset_y);
+        } else if (*line == 'S') {
+            // SIZE was requested, return it
+            char size_response[32];
+            snprintf(size_response, sizeof(size_response), "SIZE %d %d\n", vinfo.xres, vinfo.yres);
+            send(client->fd, size_response, strlen(size_response), 0);
         } else {
             // we received a string we didn't expect
             printf("Token: %s\n", line);
