@@ -19,8 +19,8 @@
 #define CEILING(x,y) (((x) + (y) - 1) / (y))
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 
-// Options for the program
-//      Framerate for the waiting main thread. Doesn't do anything
+// options for the program
+// framerate for the waiting main thread. Doesn't do anything
 #define FRAMERATE 60
 #define FB_DEV "/dev/fb0"
 #define PORT 42024
@@ -31,7 +31,7 @@
 #define EVENTS_PER_THREAD 40
 #define MAX_EVENTS MAX(EVENTS_PER_THREAD, CLIENTS_PER_THREAD)
 
-// Lookup-table for hex
+// lookup-table for hex
 static const uint8_t hex_table[256] __attribute__((aligned(64))) = {
     [0 ... 255] = 255,
     ['0'] = 0,
@@ -60,7 +60,6 @@ static const uint8_t hex_table[256] __attribute__((aligned(64))) = {
 // structs for framebuffer information
 struct fb_var_screeninfo vinfo;
 struct fb_fix_screeninfo finfo;
-int fb_fd;
 
 // the framebuffer mmap
 uint32_t *vbuffer;
@@ -82,7 +81,18 @@ typedef struct {
     struct epoll_event events[MAX_EVENTS];
 } client_thread;
 
-// TODO: Add struct for better cleanup or something
+// struct with all data for cleanup
+typedef struct {
+    int epoll_fd;
+    int fb_fd;
+    int server_fd;
+    pthread_t *threads;
+    client_state *clients;
+    client_thread *thread_data;
+} cleanup_data;
+
+// global variable to store all data for cleanup
+cleanup_data program_data;
 
 // declarations
 void get_framebuffer_properties();
@@ -90,6 +100,7 @@ void *handle_connections(void *arg);
 void *handle_clients(void *arg);
 void handle_client(client_thread *thread_data, client_state *client);
 void write_vbuffer();
+void cleanup_error(int errorcode);
 void cleanup();
 int find_client(client_state *clients, int client_fd);
 int find_spot(client_thread *thread_data, int *thread, int *client);
@@ -101,21 +112,30 @@ void write_to_vbuffer(int x, int y, uint32_t color);
 int main() {
     printf("Total clients - target: %d actual: %d\n",TOTAL_CLIENTS, CLIENTS_PER_THREAD * NUM_THREADS);
     printf("Clients per Thread: %d\n",CLIENTS_PER_THREAD);
+    int fb_fd;
     int server_fd;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
     // pthread_t thread;
 
-    signal(SIGINT, cleanup);  // Handle interrupts to clean up resources
+    program_data = (cleanup_data) {
+        .epoll_fd = 0,
+        .server_fd = 0,
+        .thread_data = NULL
+    };
 
-    // Open the framebuffer device
+    signal(SIGINT, cleanup);  // handle interrupts to clean up resources
+
+    // open the framebuffer device
     fb_fd = open(FB_DEV, O_RDWR);
     if (fb_fd == -1) {
         perror("Error opening framebuffer device");
         return EXIT_FAILURE;
     }
 
-    // Get framebuffer properties
+    program_data.fb_fd = fb_fd;
+
+    // get framebuffer properties
     get_framebuffer_properties();
 
     vbuffer = (uint32_t *)mmap(NULL, finfo.smem_len, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
@@ -125,14 +145,14 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    // Create socket
+    // create socket
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
         perror("Socket creation error");
         close(fb_fd);
         return EXIT_FAILURE;
     }
 
-    // Bind the socket
+    // bind the socket
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
@@ -152,9 +172,12 @@ int main() {
         return EXIT_FAILURE;
     }
 
+    // add to program_data for cleanup
+    program_data.server_fd = server_fd;
+
     printf("Listening socket_fd: %d\n", server_fd);
 
-    /*/ Start thread to handle incoming connections
+    /*/ start thread to handle incoming connections
     pthread_create(&thread, NULL, handle_connections, &server_fd);
     pthread_detach(thread);
 
@@ -164,7 +187,7 @@ int main() {
         usleep(1000000 / FRAMERATE);
     }*/
 
-    // Start handling incoming connections
+    // start handling incoming connections
     handle_connections(&server_fd);   
 
     cleanup();
@@ -172,15 +195,17 @@ int main() {
 }
 
 void get_framebuffer_properties() {
-    // Get variable screen information
-    if (ioctl(fb_fd, FBIOGET_VSCREENINFO, &vinfo)) {
+    // get variable screen information
+    if (ioctl(program_data.fb_fd, FBIOGET_VSCREENINFO, &vinfo)) {
         perror("Error reading variable information");
+        close(program_data.fb_fd);
         exit(EXIT_FAILURE);
     }
 
-    // Get fixed screen information
-    if (ioctl(fb_fd, FBIOGET_FSCREENINFO, &finfo)) {
+    // get fixed screen information
+    if (ioctl(program_data.fb_fd, FBIOGET_FSCREENINFO, &finfo)) {
         perror("Error reading fixed information");
+        close(program_data.fb_fd);
         exit(EXIT_FAILURE);
     }
 
@@ -199,9 +224,13 @@ void *handle_connections(void *arg) {
     int epoll_fd = epoll_create1(0);
     if (epoll_fd == -1) {
         perror("epoll_create1 failed");
-        close(server_fd);
+        close(program_data.fb_fd);
+        close(program_data.server_fd);
         exit(EXIT_FAILURE);
     }
+
+    // add to program_data for cleanup
+    program_data.epoll_fd = epoll_fd;
 
     // event structs for information
     struct epoll_event event, events[MAX_EVENTS];
@@ -212,9 +241,7 @@ void *handle_connections(void *arg) {
     // register events to listen for
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &event) == -1) {
         perror("epoll_ctl: add server_fd failed");
-        close(epoll_fd);
-        close(server_fd);
-        exit(EXIT_FAILURE);
+        cleanup_error(EXIT_FAILURE);
     }
 
     // generate structs to store data for client handling threads.
@@ -222,9 +249,13 @@ void *handle_connections(void *arg) {
     client_state* clients_buffer = (client_state*) malloc(CLIENTS_PER_THREAD * NUM_THREADS * sizeof(client_state));
     memset(clients_buffer, 0, CLIENTS_PER_THREAD * NUM_THREADS * sizeof(client_state));
 
+    // add to program_data for cleanup
+    program_data.thread_data = thread_data;
+    program_data.clients = clients_buffer;
+
     printf("Socket handle connection established. FD: %d\n", epoll_fd);
 
-    // Start multiple threads to handle connections
+    // start multiple threads to handle connections
     for (int i = 0; i < NUM_THREADS; i++) {
         thread_data[i].epoll_fd = epoll_create1(0);
         if (thread_data[i].epoll_fd == -1) {
@@ -241,6 +272,9 @@ void *handle_connections(void *arg) {
         pthread_create(&threads[i], NULL, handle_clients, &thread_data[i]);
         pthread_detach(threads[i]);
     }
+
+    // add threads to program_data for cleanup
+    program_data.threads = threads;
 
     // while-loop to accept new clients
     while (1) {
@@ -308,8 +342,8 @@ void *handle_connections(void *arg) {
         }
     }
 
-    // should we ever break out of the while loop, close the epoll fd
-    close(epoll_fd);
+    // should we ever break out of the while loop, do cleanup
+    cleanup_error(EXIT_FAILURE);
     return NULL;
 }
 
@@ -323,8 +357,7 @@ void *handle_clients(void *arg) {
         int n = epoll_wait(thread_data->epoll_fd, thread_data->events, MAX_EVENTS, -1);
         if (n == -1) {
             perror("epoll_wait failed");
-            close(thread_data->epoll_fd);
-            exit(EXIT_FAILURE);
+            cleanup_error(EXIT_FAILURE);
         }
 
         // work through all events
@@ -452,7 +485,7 @@ int find_spot(client_thread *thread_data, int *thread, int *client) {
             break;
         }
     }
-    // If a suitable thread has been found
+    // if a suitable thread has been found
     if (lowest < __INT_MAX__) {
         // find the open spot
         for (*client = 0; *client < CLIENTS_PER_THREAD; *client += 1) {
@@ -470,17 +503,17 @@ int find_spot(client_thread *thread_data, int *thread, int *client) {
 // parse a char* starting at the position of the first integer
 // char* has to consist of 2 integers delimited by 1 non-number
 void parse_int_int(const char *input, int *a, int *b) {
-    // Parse first integer
+    // parse first integer
     *a = 0;
     while (*input >= '0' && *input <= '9') {
         *a = (*a << 3) + (*a << 1) + (*input & 0xF); // result * 10 + digit
         input++;
     }
 
-    // Ignore whitespace
+    // ignore whitespace
     input++;
 
-    // Parse second integer
+    // parse second integer
     *b = 0;
     while (*input >= '0' && *input <= '9') {
         *b = (*b << 3) + (*b << 1) + (*input & 0xF); // result * 10 + digit
@@ -491,27 +524,27 @@ void parse_int_int(const char *input, int *a, int *b) {
 // parse a char* starting at the position of the first integer
 // char* has to consist of 2 integers and a string delimited by 1 non-number each
 void parse_int_int_hex(const char *input, int *a, int *b, int *c) {
-    // Parse first integer
+    // parse first integer
     *a = 0;
     while (*input >= '0' && *input <= '9') {
         *a = (*a << 3) + (*a << 1) + (*input & 0xF); // result * 10 + digit
         input++;
     }
 
-    // Ignore whitespace
+    // ignore whitespace
     input++;
 
-    // Parse second integer
+    // parse second integer
     *b = 0;
     while (*input >= '0' && *input <= '9') {
         *b = (*b << 3) + (*b << 1) + (*input & 0xF); // result * 10 + digit
         input++;
     }
 
-    // Ignore whitespace
+    // ignore whitespace
     input++;
 
-    // Parse Hex
+    // parse Hex
     *c = 0;
     while (*input) {
         uint8_t value = hex_table[(unsigned char)*input];
@@ -529,12 +562,33 @@ void write_to_vbuffer(int x, int y, uint32_t color) {
     vbuffer[y * (finfo.line_length / 4) + x] = color;
 }
 
-// clean up on SIGINT.
-// TODO: currently not cleaning everything it should
-void cleanup() {
+// clean up on program failure
+void cleanup_error(int error_code) {
+    // stop the threads and close their epolls if they have been created:
+    if (program_data.threads != NULL) {
+        for (int i = 0; i < NUM_THREADS; i++) {
+            pthread_cancel(program_data.threads[i]);
+            if (program_data.thread_data[i].epoll_fd != 0) {
+                close(program_data.thread_data[i].epoll_fd);
+            }
+        }
+    }
+
     if (vbuffer != MAP_FAILED && vbuffer != NULL) {
         munmap(vbuffer, finfo.smem_len);
     }
-    close(fb_fd);
-    exit(EXIT_SUCCESS);
+
+    close(program_data.fb_fd);
+    close(program_data.server_fd);
+    close(program_data.epoll_fd);
+
+    // also free the client_state buffer
+    free(program_data.clients);
+
+    exit(error_code);
+}
+
+// clean up on SIGINT.
+void cleanup() {
+    cleanup_error(0);
 }
