@@ -19,7 +19,8 @@
                     "ignoreFailures": true
                 }
             ],
-            "preLaunchTask": "build pixelvomit",
+            
+            "preLaunchTask": "build debug pixelvomit",
             "miDebuggerPath": "/usr/bin/gdb",
             "logging": {
                 "moduleLoad": false,

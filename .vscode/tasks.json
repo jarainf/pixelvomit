@@ -16,8 +16,29 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "problemMatcher": ["$gcc"],
+            "problemMatcher": [
+                "$gcc"
+            ],
             "detail": "Generated task for building the pixelvomit program"
-        }
+        },
+        {
+            "label": "build debug pixelvomit",
+            "type": "shell",
+            "command": "gcc",
+            "args": [
+                "pixelvomit.c",
+                "-fdiagnostics-color=always",
+                "-g",
+                "-o",
+                "pixelvomit",
+                "-O3",
+                "-pthread"
+            ],
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Generated task for building the pixelvomit program"
+        },
     ]
 }
